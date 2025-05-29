@@ -208,37 +208,68 @@
   )
 )
 
+;; Validate challenge ID format and existence
+(define-private (valid-challenge-id (challenge-id (buff 32)))
+  (and 
+    (valid-hash-32 challenge-id)
+    (is-some (map-get? challenge-arena { challenge-hash: challenge-id }))
+  )
+)
+
+;; Validate collective ID format and existence
+(define-private (valid-collective-id (collective-id (buff 32)))
+  (and 
+    (valid-hash-32 collective-id)
+    (is-some (map-get? collective-registry { collective-hash: collective-id }))
+  )
+)
+
 ;; PUBLIC READ FUNCTIONS
 
 ;; Get phantom details
 (define-read-only (get-phantom (phantom-id (buff 32)))
-  (map-get? phantom-vault { phantom-hash: phantom-id })
+  (if (valid-hash-32 phantom-id)
+    (map-get? phantom-vault { phantom-hash: phantom-id })
+    none
+  )
 )
 
 ;; Query reputation score
 (define-read-only (get-reputation (phantom-id (buff 32)))
-  (match (map-get? phantom-vault { phantom-hash: phantom-id })
-    phantom (ok (get reputation-score phantom))
-    ERR-PHANTOM-NOT-FOUND
+  (if (valid-hash-32 phantom-id)
+    (match (map-get? phantom-vault { phantom-hash: phantom-id })
+      phantom (ok (get reputation-score phantom))
+      ERR-PHANTOM-NOT-FOUND
+    )
+    ERR-INVALID-PARAMS
   )
 )
 
 ;; Check verification status
 (define-read-only (is-verified (phantom-id (buff 32)))
-  (match (map-get? phantom-vault { phantom-hash: phantom-id })
-    phantom (ok (>= (get trust-tier phantom) u1))
-    ERR-PHANTOM-NOT-FOUND
+  (if (valid-hash-32 phantom-id)
+    (match (map-get? phantom-vault { phantom-hash: phantom-id })
+      phantom (ok (>= (get trust-tier phantom) u1))
+      ERR-PHANTOM-NOT-FOUND
+    )
+    ERR-INVALID-PARAMS
   )
 )
 
 ;; Get challenge details
 (define-read-only (get-challenge (challenge-id (buff 32)))
-  (map-get? challenge-arena { challenge-hash: challenge-id })
+  (if (valid-hash-32 challenge-id)
+    (map-get? challenge-arena { challenge-hash: challenge-id })
+    none
+  )
 )
 
 ;; Get collective info
 (define-read-only (get-collective (collective-id (buff 32)))
-  (map-get? collective-registry { collective-hash: collective-id })
+  (if (valid-hash-32 collective-id)
+    (map-get? collective-registry { collective-hash: collective-id })
+    none
+  )
 )
 
 ;; System statistics
@@ -387,7 +418,11 @@
   (challenge-id (buff 32)) 
   (response-proof (buff 512)))
   (let (
-    (challenge-data (unwrap! (map-get? challenge-arena { challenge-hash: challenge-id }) ERR-PHANTOM-NOT-FOUND))
+    (challenge-data (unwrap! 
+      (if (valid-hash-32 challenge-id)
+        (map-get? challenge-arena { challenge-hash: challenge-id })
+        none
+      ) ERR-PHANTOM-NOT-FOUND))
     (target-phantom (get target-phantom challenge-data))
     (owner-data (unwrap! (map-get? owner-ledger { wallet: tx-sender }) ERR-PHANTOM-NOT-FOUND))
     (now (current-height))
@@ -420,7 +455,11 @@
 ;; Boost trust tier (admin function)
 (define-public (boost-trust (phantom-id (buff 32)))
   (let (
-    (phantom-data (unwrap! (map-get? phantom-vault { phantom-hash: phantom-id }) ERR-PHANTOM-NOT-FOUND))
+    (phantom-data (unwrap! 
+      (if (valid-hash-32 phantom-id)
+        (map-get? phantom-vault { phantom-hash: phantom-id })
+        none
+      ) ERR-PHANTOM-NOT-FOUND))
     (new-tier (+ (get trust-tier phantom-data) u1))
   )
     (asserts! (is-eq tx-sender admin) ERR-ACCESS-DENIED)
@@ -446,11 +485,17 @@
     (sender-data (unwrap! (map-get? owner-ledger { wallet: tx-sender }) ERR-PHANTOM-NOT-FOUND))
     (sender-phantom (get phantom-id sender-data))
     (sender-info (unwrap! (map-get? phantom-vault { phantom-hash: sender-phantom }) ERR-PHANTOM-NOT-FOUND))
-    (target-info (unwrap! (map-get? phantom-vault { phantom-hash: target-phantom }) ERR-PHANTOM-NOT-FOUND))
+    (target-info (unwrap! 
+      (if (valid-hash-32 target-phantom)
+        (map-get? phantom-vault { phantom-hash: target-phantom })
+        none
+      ) ERR-PHANTOM-NOT-FOUND))
     (tx-id (forge-hash sender-phantom target-phantom (current-height)))
     (now (current-height))
   )
     (asserts! (not (var-get system-paused)) ERR-ACCESS-DENIED)
+    (asserts! (valid-hash-32 target-phantom) ERR-INVALID-PARAMS)
+    (asserts! (valid-hash-32 proof-ref) ERR-INVALID-PARAMS)
     (asserts! (get is-active sender-info) ERR-PHANTOM-NOT-FOUND)
     (asserts! (get is-active target-info) ERR-PHANTOM-NOT-FOUND)
     (asserts! (>= (get reputation-score sender-info) reputation-floor) ERR-LOW-REPUTATION)
@@ -526,15 +571,20 @@
     (owner-data (unwrap! (map-get? owner-ledger { wallet: tx-sender }) ERR-PHANTOM-NOT-FOUND))
     (phantom-id (get phantom-id owner-data))
     (phantom-info (unwrap! (map-get? phantom-vault { phantom-hash: phantom-id }) ERR-PHANTOM-NOT-FOUND))
-    (collective-info (unwrap! (map-get? collective-registry { collective-hash: collective-id }) ERR-PHANTOM-NOT-FOUND))
+    (collective-info (unwrap! 
+      (if (valid-hash-32 collective-id)
+        (map-get? collective-registry { collective-hash: collective-id })
+        none
+      ) ERR-PHANTOM-NOT-FOUND))
     (membership-id (forge-hash collective-id privacy-seal (current-height)))
     (now (current-height))
   )
     (asserts! (not (var-get system-paused)) ERR-ACCESS-DENIED)
+    (asserts! (valid-hash-32 collective-id) ERR-INVALID-PARAMS)
+    (asserts! (valid-seal privacy-seal) ERR-INVALID-COMMITMENT)
     (asserts! (get is-operational collective-info) ERR-ACCESS-FORBIDDEN)
     (asserts! (get is-active phantom-info) ERR-PHANTOM-NOT-FOUND)
     (asserts! (>= (get reputation-score phantom-info) (get min-reputation collective-info)) ERR-LOW-REPUTATION)
-    (asserts! (valid-seal privacy-seal) ERR-INVALID-COMMITMENT)
     
     ;; Create membership
     (map-set membership-vault
@@ -588,7 +638,7 @@
   )
 )
 
-;; NEW FUNCTION: Batch reputation transfer
+;; Batch reputation transfer
 (define-public (batch-reputation-transfer
   (recipients (list 10 (buff 32)))
   (amounts (list 10 int))
@@ -604,8 +654,31 @@
     (asserts! (is-eq (len recipients) (len amounts)) ERR-INVALID-PARAMS)
     (asserts! (<= interaction-type max-interaction-types) ERR-INVALID-PARAMS)
     
+    ;; Validate all recipients first
+    (asserts! (is-eq false (fold validate-recipient recipients false)) ERR-INVALID-PARAMS)
+    (asserts! (is-eq false (fold validate-amount amounts false)) ERR-INVALID-PARAMS)
+    
     ;; Process each transfer
     (ok (map process-single-transfer recipients amounts))
+  )
+)
+
+;; Helper for validating recipients
+(define-private (validate-recipient (recipient (buff 32)) (has-error bool))
+  (if has-error
+    has-error
+    (not (and 
+      (valid-hash-32 recipient)
+      (phantom-exists recipient)
+    ))
+  )
+)
+
+;; Helper for validating amounts
+(define-private (validate-amount (amount int) (has-error bool))
+  (if has-error
+    has-error
+    (not (valid-rep-delta amount))
   )
 )
 
@@ -615,13 +688,14 @@
     (target-info (unwrap-panic (map-get? phantom-vault { phantom-hash: recipient })))
     (tx-id (forge-hash recipient (unwrap-panic (to-consensus-buff? amount)) (current-height)))
     (now (current-height))
+    (sender-phantom (get phantom-id (unwrap-panic (map-get? owner-ledger { wallet: tx-sender }))))
   )
     (begin
       ;; Record transaction
       (map-set rep-ledger
         { tx-hash: tx-id }
         {
-          giver-phantom: (get phantom-id (unwrap-panic (map-get? owner-ledger { wallet: tx-sender }))),
+          giver-phantom: sender-phantom,
           receiver-phantom: recipient,
           interaction-type: u1,
           rep-delta: amount,
@@ -670,9 +744,14 @@
   (phantom-id (buff 32)) 
   (new-reputation uint))
   (let (
-    (phantom-data (unwrap! (map-get? phantom-vault { phantom-hash: phantom-id }) ERR-PHANTOM-NOT-FOUND))
+    (phantom-data (unwrap! 
+      (if (valid-hash-32 phantom-id)
+        (map-get? phantom-vault { phantom-hash: phantom-id })
+        none
+      ) ERR-PHANTOM-NOT-FOUND))
   )
     (asserts! (is-eq tx-sender admin) ERR-ACCESS-DENIED)
+    (asserts! (valid-hash-32 phantom-id) ERR-INVALID-PARAMS)
     (asserts! (<= new-reputation reputation-cap) ERR-INVALID-PARAMS)
     
     (map-set phantom-vault
